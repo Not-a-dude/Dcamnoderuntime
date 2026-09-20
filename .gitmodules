@@ -1,0 +1,3 @@
+[submodule "Dcam-Node-SDK"]
+	path = Dcam-Node-SDK
+	url = https://github.com/Not-a-dude/Dcam-Node-SDK.git
