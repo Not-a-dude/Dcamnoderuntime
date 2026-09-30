@@ -91,9 +91,9 @@ bool retainZslFrame(NativeSession* session, const NativeNodeInstance& node,
     return true;
 }
 
-void notifyZslEvicted(NativeSession* session, const NativeNodeInstance& node,
+    void notifyZslEvicted(const NativeNodeInstance &node,
                       uint64_t frame_id) {
-    if (!session->node_api.on_capture_event) return;
+        if (!node.api.on_capture_event) return;
     static constexpr char message[] = "Runtime ZSL capacity is exhausted";
     const DcamCaptureEvent event{
         .struct_size = sizeof(DcamCaptureEvent),
@@ -103,7 +103,7 @@ void notifyZslEvicted(NativeSession* session, const NativeNodeInstance& node,
         .frame_id = frame_id,
         .message = {message, sizeof(message) - 1},
     };
-    session->node_api.on_capture_event(node.handle, &event);
+        node.api.on_capture_event(node.handle, &event);
 }
 
 DcamStatus processNode(NativeSession* session, size_t node_index,
@@ -121,12 +121,12 @@ DcamStatus processNode(NativeSession* session, size_t node_index,
     DcamStatus status;
     {
         std::lock_guard lock(session->graph_mutex);
-        status = session->node_api.process(node.handle, &frame, &result);
+        status = node.api.process(node.handle, &frame, &result);
     }
     waitAndCloseFence(result.release_fence_fd);
     if (out_flags) *out_flags |= result.flags;
     if (result.disposition == DCAM_FRAME_RETAIN_ZSL && status == DCAM_OK) {
-        if (!retainZslFrame(session, node, frame)) notifyZslEvicted(session, node, frame.frame_id);
+        if (!retainZslFrame(session, node, frame)) notifyZslEvicted(node, frame.frame_id);
     } else if (result.disposition != DCAM_FRAME_RELEASE && status == DCAM_OK) {
         status = DCAM_ERROR_PROCESSING;
     }

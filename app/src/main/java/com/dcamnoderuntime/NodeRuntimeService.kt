@@ -9,6 +9,9 @@ import android.os.ParcelFileDescriptor
 import android.os.Process
 import android.util.Log
 import android.view.Surface
+import com.dcam.node.ArtifactRequestParcel
+import com.dcam.node.ArtifactResult
+import com.dcam.node.ArtifactTargetParcel
 import com.dcam.node.CaptureEvent
 import com.dcam.node.DependencyParcel
 import com.dcam.node.FrameParcel
@@ -17,9 +20,6 @@ import com.dcam.node.IDcamNodeHost
 import com.dcam.node.IDcamNodeRuntime
 import com.dcam.node.OutputResult
 import com.dcam.node.OutputTargetParcel
-import com.dcam.node.ArtifactRequestParcel
-import com.dcam.node.ArtifactResult
-import com.dcam.node.ArtifactTargetParcel
 import com.dcam.node.RequestStateResult
 import com.dcam.node.RequestStateTransaction
 import com.dcam.node.RuntimeInfo
@@ -28,8 +28,8 @@ import com.dcam.node.SessionOpenResult
 import com.dcam.node.SingleCaptureRequest
 import org.json.JSONObject
 import java.io.IOException
-import java.util.concurrent.ExecutionException
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ExecutionException
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
@@ -350,7 +350,8 @@ class NodeRuntimeService : Service() {
             }
             if (handle == 0L) {
                 callbacks.close()
-                return response.fail(STATUS_PROCESSING, "Native session failed to open")
+                val detail = getLastOpenErrorNative() ?: "Native session failed to open"
+                return response.fail(STATUS_PROCESSING, detail)
             }
             val descriptor = getDescriptorNative(handle)
             if (descriptor == null || descriptor.size < 3) {
@@ -731,6 +732,7 @@ class NodeRuntimeService : Service() {
         maximumZslDepth: Int,
         callbacks: NativeHostCallbacks,
     ): Long
+    private external fun getLastOpenErrorNative(): String?
     private external fun getDescriptorNative(handle: Long): Array<String>?
     private external fun processFrameNative(handle: Long, frame: FrameParcel, acquireFenceFd: Int): LongArray?
     private external fun updateParametersNative(handle: Long, revision: Long, jsonPatch: String): Int

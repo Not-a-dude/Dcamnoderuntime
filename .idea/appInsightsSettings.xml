@@ -9,10 +9,10 @@
             <InsightsFilterSettings>
               <option name="connection">
                 <ConnectionSetting>
-                  <option name="appId" value="com.dcam" />
-                  <option name="mobileSdkAppId" value="1:739909045245:android:aea5c5b9d9c45995cea794" />
-                  <option name="projectId" value="dcam-2b6d2" />
-                  <option name="projectNumber" value="739909045245" />
+                  <option name="appId" value="com.dcamnoderuntime" />
+                  <option name="mobileSdkAppId" value="1:641810874726:android:7881d6023b9a22438148a7" />
+                  <option name="projectId" value="dcamnoderuntime" />
+                  <option name="projectNumber" value="641810874726" />
                 </ConnectionSetting>
               </option>
               <option name="signal" value="SIGNAL_UNSPECIFIED" />

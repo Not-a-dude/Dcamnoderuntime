@@ -96,9 +96,10 @@ void NativeSession::releaseJavaBindings(JNIEnv* env) const {
 
 void destroySession(JNIEnv* env, NativeSession* session) {
     if (!session) return;
-    if (session->node_api.destroy) {
-        for (auto it = session->nodes.rbegin(); it != session->nodes.rend(); ++it) {
-            if (it->handle) session->node_api.destroy(it->handle);
+    for (auto it = session->nodes.rbegin(); it != session->nodes.rend(); ++it) {
+        if (it->handle && it->api.destroy) {
+            it->api.destroy(it->handle);
+            it->handle = 0;
         }
     }
     releasePresentedPreview(session);

@@ -13,3 +13,13 @@
 -keepclasseswithmembernames class * {
     native <methods>;
 }
+
+# JNI callbacks invoked reflectively from native C++ code
+-keep class com.dcamnoderuntime.NodeRuntimeService$NativeHostCallbacks {
+    *;
+}
+
+# AIDL parcelables accessed reflectively via JNI or serialized across IPC
+-keep class com.dcam.node.** {
+    *;
+}

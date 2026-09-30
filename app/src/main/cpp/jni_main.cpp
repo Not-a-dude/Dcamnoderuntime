@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <android/dlext.h>
 #include <android/hardware_buffer_jni.h>
+#include <android/log.h>
 #include <android/native_window_jni.h>
 #include <dlfcn.h>
 #include <cstring>
@@ -10,9 +11,17 @@
 #include <unistd.h>
 #include <vulkan/vulkan.h>
 
+#define LOG_TAG "DcamNodeRuntime"
+
 namespace {
 
 constexpr int32_t kMaximumZslDepth = 16;
+    thread_local std::string g_last_open_error;
+
+    void logOpenError(const std::string &error_msg) {
+        g_last_open_error = error_msg;
+        __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "%s", error_msg.c_str());
+    }
 
 std::string copyJString(JNIEnv* env, jstring value) {
     if (!value) return {};
@@ -70,27 +79,31 @@ bool copyPorts(const DcamPortDescriptor* ports, uint32_t count,
 
 bool describeNode(NativeSession* session, const std::string& type_id,
                   NativeNodeInstance* output) {
-    uint32_t descriptor_count = 0;
-    if (session->node_api.get_node_count(&descriptor_count) != DCAM_OK) return false;
-    for (uint32_t index = 0; index < descriptor_count; ++index) {
-        DcamNodeDescriptor descriptor{.struct_size = sizeof(DcamNodeDescriptor)};
-        if (session->node_api.get_node_descriptor(index, &descriptor) != DCAM_OK ||
-            !descriptor.node_type_id.data || !descriptor.module_id.data ||
-            !descriptor.module_version.data ||
-            std::string(descriptor.node_type_id.data, descriptor.node_type_id.size) != type_id) {
-            continue;
+    for (const auto &api: session->node_apis) {
+        uint32_t descriptor_count = 0;
+        if (api.get_node_count(&descriptor_count) != DCAM_OK) continue;
+        for (uint32_t index = 0; index < descriptor_count; ++index) {
+            DcamNodeDescriptor descriptor{.struct_size = sizeof(DcamNodeDescriptor)};
+            if (api.get_node_descriptor(index, &descriptor) != DCAM_OK ||
+                !descriptor.node_type_id.data || !descriptor.module_id.data ||
+                !descriptor.module_version.data ||
+                std::string(descriptor.node_type_id.data, descriptor.node_type_id.size) !=
+                type_id) {
+                continue;
+            }
+            const std::string module_id(descriptor.module_id.data, descriptor.module_id.size);
+            const std::string module_version(
+                    descriptor.module_version.data, descriptor.module_version.size);
+            if (session->module_id.empty()) {
+                session->module_id = module_id;
+                session->module_version = module_version;
+            }
+            output->api = api;
+            return copyPorts(descriptor.input_ports, descriptor.input_port_count,
+                             &output->inputs) &&
+                   copyPorts(descriptor.output_ports, descriptor.output_port_count,
+                             &output->outputs);
         }
-        const std::string module_id(descriptor.module_id.data, descriptor.module_id.size);
-        const std::string module_version(
-                descriptor.module_version.data, descriptor.module_version.size);
-        if (session->module_id.empty()) {
-            session->module_id = module_id;
-            session->module_version = module_version;
-        } else if (session->module_id != module_id || session->module_version != module_version) {
-            return false;
-        }
-        return copyPorts(descriptor.input_ports, descriptor.input_port_count, &output->inputs) &&
-               copyPorts(descriptor.output_ports, descriptor.output_port_count, &output->outputs);
     }
     return false;
 }
@@ -99,6 +112,12 @@ bool describeNode(NativeSession* session, const std::string& type_id,
 
 extern "C" {
 
+JNIEXPORT jstring JNICALL
+Java_com_dcamnoderuntime_NodeRuntimeService_getLastOpenErrorNative(JNIEnv *env, jobject) {
+    if (g_last_open_error.empty()) return nullptr;
+    return env->NewStringUTF(g_last_open_error.c_str());
+}
+
 JNIEXPORT jlong JNICALL
 Java_com_dcamnoderuntime_NodeRuntimeService_openSessionNative(
     JNIEnv* env, jobject, jlong sid, jint lfd, jintArray dfds, jobjectArray dnames,
@@ -106,10 +125,16 @@ Java_com_dcamnoderuntime_NodeRuntimeService_openSessionNative(
     jobjectArray edge_sources_array, jobjectArray edge_targets_array,
     jint maximum_zsl_depth, jobject cb) {
 
-    if (sid <= 0 || lfd < 0 || !ntids || !iids || !cfgs || !cb) return 0;
+    g_last_open_error.clear();
+
+    if (sid <= 0 || lfd < 0 || !ntids || !iids || !cfgs || !cb) {
+        logOpenError("Invalid session arguments passed to openSessionNative");
+        return 0;
+    }
     const jsize node_count = env->GetArrayLength(ntids);
     if (node_count <= 0 || env->GetArrayLength(iids) != node_count ||
         env->GetArrayLength(cfgs) != node_count) {
+        logOpenError("Node array parameters count mismatch in openSessionNative");
         return 0;
     }
     std::vector<std::string> node_type_ids;
@@ -120,6 +145,7 @@ Java_com_dcamnoderuntime_NodeRuntimeService_openSessionNative(
         !copyJStringArray(env, cfgs, node_count, &configs) ||
         !edge_sources_array || !edge_targets_array ||
         env->GetArrayLength(edge_sources_array) != env->GetArrayLength(edge_targets_array)) {
+        logOpenError("Failed to parse node configuration strings in openSessionNative");
         return 0;
     }
     const jsize edge_count = env->GetArrayLength(edge_sources_array);
@@ -127,18 +153,24 @@ Java_com_dcamnoderuntime_NodeRuntimeService_openSessionNative(
     std::vector<std::string> edge_targets;
     if (!copyJStringArray(env, edge_sources_array, edge_count, &edge_sources) ||
         !copyJStringArray(env, edge_targets_array, edge_count, &edge_targets)) {
+        logOpenError("Failed to parse edge configuration strings in openSessionNative");
         return 0;
     }
     auto* s = new NativeSession{};
     s->session_id = static_cast<uint64_t>(sid);
     s->maximum_zsl_depth = static_cast<uint32_t>(
             std::clamp(static_cast<int32_t>(maximum_zsl_depth), 0, kMaximumZslDepth));
-    if (!s->cacheJavaBindings(env, cb)) { destroySession(env, s); return 0; }
+    if (!s->cacheJavaBindings(env, cb)) {
+        logOpenError("Failed to cache Java callbacks in openSessionNative");
+        destroySession(env, s);
+        return 0;
+    }
     initHostApi(&s->host_api, s);
     s->node_api.struct_size = sizeof(DcamNodeApi);
 
     jsize dcnt = dfds ? env->GetArrayLength(dfds) : 0;
     if ((dcnt > 0 && !dnames) || (dnames && env->GetArrayLength(dnames) != dcnt)) {
+        logOpenError("Dependency file descriptor count mismatch");
         destroySession(env, s);
         return 0;
     }
@@ -148,29 +180,97 @@ Java_com_dcamnoderuntime_NodeRuntimeService_openSessionNative(
         auto nm = (jstring)env->GetObjectArrayElement(dnames, i);
         const std::string name = copyJString(env, nm);
         if (nm) env->DeleteLocalRef(nm);
-        if (name.empty() || fds[i] < 0) { destroySession(env, s); return 0; }
+        if (name.empty() || fds[i] < 0) {
+            logOpenError(
+                    "Invalid dependency file descriptor or name at index " + std::to_string(i));
+            destroySession(env, s);
+            return 0;
+        }
         android_dlextinfo info{};
         info.flags = ANDROID_DLEXT_USE_LIBRARY_FD;
         info.library_fd = dup(fds[i]);
-        if (info.library_fd < 0) { destroySession(env, s); return 0; }
+        if (info.library_fd < 0) {
+            logOpenError("Failed to dup FD for dependency library '" + name + "'");
+            destroySession(env, s);
+            return 0;
+        }
+        dlerror(); // Clear any existing error
         void* dep = android_dlopen_ext(name.c_str(), RTLD_NOW | RTLD_GLOBAL, &info);
         close(info.library_fd);
-        if (!dep) { destroySession(env, s); return 0; }
+        if (!dep) {
+            const char *dlerr = dlerror();
+            std::string msg = "Failed to dlopen dependency library '" + name + "'";
+            if (dlerr) {
+                msg += ": ";
+                msg += dlerr;
+            }
+            logOpenError(msg);
+            destroySession(env, s);
+            return 0;
+        }
         s->dependencies.push_back(dep);
     }
 
     android_dlextinfo info{};
     info.flags = ANDROID_DLEXT_USE_LIBRARY_FD;
     info.library_fd = dup(lfd);
-    if (info.library_fd < 0) { destroySession(env, s); return 0; }
-    s->library = android_dlopen_ext("libnode.so", RTLD_NOW | RTLD_LOCAL, &info);
+    if (info.library_fd < 0) {
+        logOpenError("Failed to dup FD for main node library");
+        destroySession(env, s);
+        return 0;
+    }
+    dlerror(); // Clear any existing error
+    s->library = android_dlopen_ext("libnode.so", RTLD_NOW | RTLD_GLOBAL, &info);
     close(info.library_fd);
-    if (!s->library) { destroySession(env, s); return 0; }
+    if (!s->library) {
+        const char *dlerr = dlerror();
+        std::string msg = "Failed to dlopen main node library (libnode.so)";
+        if (dlerr) {
+            msg += ": ";
+            msg += dlerr;
+        }
+        logOpenError(msg);
+        destroySession(env, s);
+        return 0;
+    }
 
+    dlerror();
     auto get_api = (DcamNodeGetApiFn)dlsym(s->library, DCAM_NODE_ENTRYPOINT);
-    if (!get_api || get_api(DCAM_NODE_ABI_MAJOR, &s->host_api, &s->node_api) != DCAM_OK ||
-        !hasRequiredNodeApi(s->node_api)) {
-        destroySession(env, s); return 0;
+    if (!get_api) {
+        const char *dlerr = dlerror();
+        std::string msg = "Failed to dlsym entrypoint '"
+        DCAM_NODE_ENTRYPOINT
+        "' from main library";
+        if (dlerr) {
+            msg += ": ";
+            msg += dlerr;
+        }
+        logOpenError(msg);
+        destroySession(env, s);
+        return 0;
+    }
+    DcamStatus api_status = get_api(DCAM_NODE_ABI_MAJOR, &s->host_api, &s->node_api);
+    if (api_status != DCAM_OK) {
+        logOpenError("Main library entrypoint returned error status " + std::to_string(api_status));
+        destroySession(env, s);
+        return 0;
+    }
+    if (!hasRequiredNodeApi(s->node_api)) {
+        logOpenError("Main library node API is missing required function pointers or ABI mismatch");
+        destroySession(env, s);
+        return 0;
+    }
+    s->node_apis.push_back(s->node_api);
+
+    for (void *dep: s->dependencies) {
+        auto dep_get_api = (DcamNodeGetApiFn) dlsym(dep, DCAM_NODE_ENTRYPOINT);
+        if (dep_get_api) {
+            DcamNodeApi dep_api{.struct_size = sizeof(DcamNodeApi)};
+            if (dep_get_api(DCAM_NODE_ABI_MAJOR, &s->host_api, &dep_api) == DCAM_OK &&
+                hasRequiredNodeApi(dep_api)) {
+                s->node_apis.push_back(dep_api);
+            }
+        }
     }
 
     for (jsize i = 0; i < node_count; ++i) {
@@ -178,6 +278,8 @@ Java_com_dcamnoderuntime_NodeRuntimeService_openSessionNative(
         instance.type_id = node_type_ids[i];
         instance.instance_id = instance_ids[i];
         if (!describeNode(s, instance.type_id, &instance)) {
+            logOpenError("Failed to describe node type '" + instance.type_id + "' (instance '" +
+                         instance.instance_id + "')");
             destroySession(env, s);
             return 0;
         }
@@ -188,18 +290,26 @@ Java_com_dcamnoderuntime_NodeRuntimeService_openSessionNative(
         const DcamStringView config_view{
             configs[i].data(), static_cast<uint32_t>(configs[i].size())};
         DcamNodeHandle handle = 0;
-        if (s->node_api.create(type_view, instance_view, config_view, &handle) != DCAM_OK || !handle) {
+        DcamStatus create_st = instance.api.create(type_view, instance_view, config_view, &handle);
+        if (create_st != DCAM_OK || !handle) {
+            logOpenError("Failed to create node instance '" + instance.instance_id + "' (type '" +
+                         instance.type_id + "'), error: " + std::to_string(create_st));
             destroySession(env, s);
             return 0;
         }
         instance.handle = handle;
-        s->nodes.push_back(std::move(instance));
-        if (s->node_api.configure(handle, config_view) != DCAM_OK) {
+        DcamStatus cfg_st = instance.api.configure(handle, config_view);
+        if (cfg_st != DCAM_OK) {
+            logOpenError(
+                    "Failed to configure node instance '" + instance.instance_id + "' (type '" +
+                    instance.type_id + "'), error: " + std::to_string(cfg_st));
             destroySession(env, s);
             return 0;
         }
+        s->nodes.push_back(std::move(instance));
     }
     if (!configureGraph(s, edge_sources, edge_targets)) {
+        logOpenError("Failed to configure node execution graph");
         destroySession(env, s);
         return 0;
     }
@@ -341,13 +451,14 @@ Java_com_dcamnoderuntime_NodeRuntimeService_processFrameNative(JNIEnv* env, jobj
 JNIEXPORT jint JNICALL
 Java_com_dcamnoderuntime_NodeRuntimeService_updateParametersNative(JNIEnv* env, jobject, jlong h, jlong rev, jstring patch) {
     auto* s = (NativeSession*)h;
-    if (!s || !s->node_api.update_parameters) return DCAM_ERROR_UNSUPPORTED;
+    if (!s) return DCAM_ERROR_UNSUPPORTED;
     const char* cpatch = env->GetStringUTFChars(patch, nullptr);
     DcamStatus status = DCAM_OK;
     const DcamStringView patch_view{cpatch, (uint32_t)strlen(cpatch)};
     for (const NativeNodeInstance& node : s->nodes) {
+        if (!node.api.update_parameters) continue;
         const DcamStatus node_status =
-                s->node_api.update_parameters(node.handle, (uint64_t)rev, patch_view);
+                node.api.update_parameters(node.handle, (uint64_t) rev, patch_view);
         if (status == DCAM_OK && node_status != DCAM_OK) status = node_status;
     }
     env->ReleaseStringUTFChars(patch, cpatch);
@@ -357,7 +468,7 @@ Java_com_dcamnoderuntime_NodeRuntimeService_updateParametersNative(JNIEnv* env, 
 JNIEXPORT jint JNICALL
 Java_com_dcamnoderuntime_NodeRuntimeService_captureEventNative(JNIEnv* env, jobject, jlong h, jobject ev) {
     auto* s = (NativeSession*)h;
-    if (!s || !s->node_api.on_capture_event) return DCAM_ERROR_UNSUPPORTED;
+    if (!s) return DCAM_ERROR_UNSUPPORTED;
     jclass cls = env->GetObjectClass(ev);
     jstring msg = (jstring)env->GetObjectField(ev, env->GetFieldID(cls, "message", "Ljava/lang/String;"));
     const char* cmsg = msg ? env->GetStringUTFChars(msg, nullptr) : "";
@@ -371,7 +482,8 @@ Java_com_dcamnoderuntime_NodeRuntimeService_captureEventNative(JNIEnv* env, jobj
     };
     DcamStatus status = DCAM_OK;
     for (const NativeNodeInstance& node : s->nodes) {
-        const DcamStatus node_status = s->node_api.on_capture_event(node.handle, &event);
+        if (!node.api.on_capture_event) continue;
+        const DcamStatus node_status = node.api.on_capture_event(node.handle, &event);
         if (status == DCAM_OK && node_status != DCAM_OK) status = node_status;
     }
     if (msg) env->ReleaseStringUTFChars(msg, cmsg);
@@ -383,7 +495,7 @@ Java_com_dcamnoderuntime_NodeRuntimeService_captureEventNative(JNIEnv* env, jobj
 JNIEXPORT jint JNICALL
 Java_com_dcamnoderuntime_NodeRuntimeService_requestStateResultNative(JNIEnv* env, jobject, jlong h, jobject r) {
     auto* s = (NativeSession*)h;
-    if (!s || !s->node_api.on_request_state_result) return DCAM_ERROR_UNSUPPORTED;
+    if (!s) return DCAM_ERROR_UNSUPPORTED;
     jclass cls = env->GetObjectClass(r);
     jstring name = (jstring)env->GetObjectField(r, env->GetFieldID(cls, "keyName", "Ljava/lang/String;"));
     jstring msg = (jstring)env->GetObjectField(r, env->GetFieldID(cls, "message", "Ljava/lang/String;"));
@@ -400,7 +512,8 @@ Java_com_dcamnoderuntime_NodeRuntimeService_requestStateResultNative(JNIEnv* env
     };
     DcamStatus status = DCAM_OK;
     for (const NativeNodeInstance& node : s->nodes) {
-        const DcamStatus node_status = s->node_api.on_request_state_result(node.handle, &res);
+        if (!node.api.on_request_state_result) continue;
+        const DcamStatus node_status = node.api.on_request_state_result(node.handle, &res);
         if (status == DCAM_OK && node_status != DCAM_OK) status = node_status;
     }
     if (name) env->ReleaseStringUTFChars(name, cname);
@@ -457,10 +570,11 @@ Java_com_dcamnoderuntime_NodeRuntimeService_evictZslFrameNative(
 
 JNIEXPORT jint JNICALL Java_com_dcamnoderuntime_NodeRuntimeService_flushSessionNative(JNIEnv*, jobject, jlong h) {
     auto* s = (NativeSession*)h;
-    if (!s || !s->node_api.flush) return DCAM_OK;
+    if (!s) return DCAM_OK;
     DcamStatus status = DCAM_OK;
     for (const NativeNodeInstance& node : s->nodes) {
-        const DcamStatus node_status = s->node_api.flush(node.handle);
+        if (!node.api.flush) continue;
+        const DcamStatus node_status = node.api.flush(node.handle);
         if (status == DCAM_OK && node_status != DCAM_OK) status = node_status;
     }
     return status;

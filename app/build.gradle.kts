@@ -60,7 +60,7 @@ android {
             }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
-                "rules.keep",
+                "src/main/keepRules/rules.keep",
             )
         }
     }

@@ -22,6 +22,7 @@ struct NativeNodeInstance {
     DcamNodeHandle handle = 0;
     std::string type_id;
     std::string instance_id;
+    DcamNodeApi api{};
     std::vector<NativePort> inputs;
     std::vector<NativePort> outputs;
 };
@@ -60,6 +61,7 @@ struct NativeSession {
     std::vector<void*> dependencies;
     DcamHostApi host_api{};
     DcamNodeApi node_api{};
+    std::vector<DcamNodeApi> node_apis;
     std::vector<NativeNodeInstance> nodes;
     std::vector<NativeGraphEdge> graph_edges;
     std::vector<size_t> graph_roots;
