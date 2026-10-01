@@ -96,6 +96,7 @@ class NodeRuntimeService : Service() {
             host.onRequestStateTransaction(transaction)
             STATUS_OK
         } catch (error: Throwable) {
+            Log.e(TAG, "Unable to submit request state for session $sessionId", error)
             STATUS_IO
         }
 
@@ -112,6 +113,7 @@ class NodeRuntimeService : Service() {
                 })
                 STATUS_OK
             } catch (error: Throwable) {
+                Log.e(TAG, "Unable to request single capture for session $sessionId", error)
                 STATUS_IO
             }
         }
@@ -147,6 +149,11 @@ class NodeRuntimeService : Service() {
                 })
                 if (valid) STATUS_OK else STATUS_IO
             } catch (error: Throwable) {
+                Log.e(
+                    TAG,
+                    "Unable to send output result for session $sessionId, capture $captureId",
+                    error
+                )
                 STATUS_IO
             }
         }
@@ -167,6 +174,11 @@ class NodeRuntimeService : Service() {
                     this.maximumBytes = maximumBytes
                 })
             } catch (error: Throwable) {
+                Log.e(
+                    TAG,
+                    "Unable to open artifact for session $sessionId, capture $captureId",
+                    error
+                )
                 return null
             }
             val descriptor = target.outputFd ?: run {
@@ -210,6 +222,11 @@ class NodeRuntimeService : Service() {
                 })
                 if (valid) STATUS_OK else STATUS_IO
             } catch (error: Throwable) {
+                Log.e(
+                    TAG,
+                    "Unable to send artifact result for session $sessionId, artifact $artifactId",
+                    error
+                )
                 STATUS_IO
             }
         }
@@ -294,6 +311,9 @@ class NodeRuntimeService : Service() {
                 dependencies.closeDescriptors()
                 return response.fail(STATUS_INVALID_ARGUMENT, "Missing session config, node FD, or host callback")
             }
+            val sessionId = config.requestedSessionId
+            Log.i(TAG, "Opening session $sessionId (nodeType=${config.nodeTypeId})")
+
             if (config.runtimeAbi != RUNTIME_ABI) {
                 nodeLibrary.closeQuietly()
                 dependencies.closeDescriptors()
@@ -302,7 +322,6 @@ class NodeRuntimeService : Service() {
                     "Dcam runtime ABI ${config.runtimeAbi} is unsupported; expected $RUNTIME_ABI",
                 )
             }
-            val sessionId = config.requestedSessionId
             if (sessionId <= 0 || sessions.containsKey(sessionId)) {
                 nodeLibrary.closeQuietly()
                 dependencies.closeDescriptors()
@@ -318,6 +337,7 @@ class NodeRuntimeService : Service() {
             val graph = runCatching { buildNativeGraph(config) }.getOrElse { error ->
                 nodeLibrary.closeQuietly()
                 dependencyList.closeDescriptors()
+                Log.e(TAG, "Failed to build native graph for session $sessionId", error)
                 return response.fail(
                     STATUS_INVALID_ARGUMENT,
                     "Invalid session JSON: ${error.message ?: error.javaClass.simpleName}",
@@ -382,6 +402,7 @@ class NodeRuntimeService : Service() {
             try {
                 host.asBinder().linkToDeath(deathRecipient, 0)
             } catch (error: Throwable) {
+                Log.e(TAG, "Failed to link host death recipient for session $sessionId", error)
                 closeRuntimeSession(session, unlinkDeath = false)
                 return response.fail(STATUS_BAD_STATE, "Host callback Binder is already dead")
             }
@@ -396,7 +417,7 @@ class NodeRuntimeService : Service() {
             response.moduleVersion = descriptor[1]
             response.nodeTypeId = descriptor[2]
             response.message = "Session opened"
-            Log.i(TAG, "Session opened: $sessionId")
+            Log.i(TAG, "Session opened: $sessionId (moduleId=${descriptor[0]})")
             return response
         }
 
@@ -420,7 +441,8 @@ class NodeRuntimeService : Service() {
                 Log.e(TAG, "Timed out setting preview surface for $sessionId", error)
                 STATUS_BUSY
             } catch (error: ExecutionException) {
-                Log.e(TAG, "Unable to set preview surface for $sessionId", error.cause ?: error)
+                val cause = error.cause ?: error
+                Log.e(TAG, "Unable to set preview surface for $sessionId", cause)
                 STATUS_PROCESSING
             }
         }
@@ -444,7 +466,10 @@ class NodeRuntimeService : Service() {
                 }
                 val kill = watchdog.schedule({
                     if (session.processingFrame.get() == frame.frameId) {
-                        Log.e(TAG, "Node hung on frame ${frame.frameId}; terminating runtime process")
+                        Log.e(
+                            TAG,
+                            "Node hung on frame ${frame.frameId} for session ${frame.sessionId}; terminating runtime process"
+                        )
                         Process.killProcess(Process.myPid())
                     }
                 }, processTimeout, TimeUnit.MILLISECONDS)
@@ -476,7 +501,11 @@ class NodeRuntimeService : Service() {
                         }
                     }
                 } catch (error: Throwable) {
-                    Log.e(TAG, "Node processing failed", error)
+                    Log.e(
+                        TAG,
+                        "Node processing failed for session ${frame.sessionId}, frame ${frame.frameId}",
+                        error
+                    )
                     runCatching {
                         session.host.onFrameReleased(FrameRelease().apply {
                             this.sessionId = frame.sessionId
@@ -492,10 +521,11 @@ class NodeRuntimeService : Service() {
                     frame.hardwareBuffer?.close()
                     frame.acquireFence?.closeQuietly()
                 }
-            } }.onFailure {
+            }
+            }.onFailure { error ->
                 frame.hardwareBuffer?.close()
                 frame.acquireFence?.closeQuietly()
-                Log.w(TAG, "Session ${frame.sessionId} rejected frame ${frame.frameId}", it)
+                Log.w(TAG, "Session ${frame.sessionId} rejected frame ${frame.frameId}", error)
             }
         }
 
@@ -572,7 +602,9 @@ class NodeRuntimeService : Service() {
             runCatching {
                 session.executor.submit<Int> { flushSessionNative(session.nativeHandle) }
                     .get(SESSION_CLOSE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-            }.onFailure { Log.w(TAG, "Flush failed for $sessionId", it) }
+            }.onFailure { error ->
+                Log.w(TAG, "Flush failed for $sessionId", error)
+            }
         }
 
         override fun closeSession(sessionId: Long) {
@@ -592,6 +624,7 @@ class NodeRuntimeService : Service() {
     }
 
     override fun onDestroy() {
+        Log.i(TAG, "Runtime service destroying")
         sessions.keys.toList().forEach { id -> sessions.remove(id)?.let(::closeRuntimeSession) }
         watchdog.shutdownNow()
         super.onDestroy()
@@ -605,8 +638,8 @@ class NodeRuntimeService : Service() {
                 closeSessionNative(session.nativeHandle)
             }.get(SESSION_CLOSE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
             true
-        }.getOrElse {
-            Log.e(TAG, "Native session ${session.sessionId} did not close cleanly", it)
+        }.getOrElse { error ->
+            Log.e(TAG, "Native session ${session.sessionId} did not close cleanly", error)
             false
         }
         session.callbacks.close()
@@ -709,6 +742,7 @@ class NodeRuntimeService : Service() {
     private fun SessionOpenResult.fail(code: Int, detail: String): SessionOpenResult = apply {
         status = code
         message = detail
+        Log.w(TAG, "Session $sessionId open failed ($code): $detail")
     }
 
     private fun ParcelFileDescriptor.closeQuietly() {
