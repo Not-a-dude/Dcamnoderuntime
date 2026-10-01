@@ -9,7 +9,6 @@
 #include <string>
 #include <unordered_set>
 #include <unistd.h>
-#include <vulkan/vulkan.h>
 
 #define LOG_TAG "DcamNodeRuntime"
 
@@ -582,49 +581,6 @@ JNIEXPORT jint JNICALL Java_com_dcamnoderuntime_NodeRuntimeService_flushSessionN
 
 JNIEXPORT void JNICALL Java_com_dcamnoderuntime_NodeRuntimeService_closeSessionNative(JNIEnv* env, jobject, jlong h) {
     destroySession(env, (NativeSession*)h);
-}
-
-JNIEXPORT jboolean JNICALL
-Java_com_dcamnoderuntime_NodeRuntimeService_probeVulkanNative(JNIEnv*, jobject) {
-    void* library = dlopen("libvulkan.so", RTLD_NOW | RTLD_LOCAL);
-    if (!library) return JNI_FALSE;
-    auto get_instance_proc = reinterpret_cast<PFN_vkGetInstanceProcAddr>(
-            dlsym(library, "vkGetInstanceProcAddr"));
-    if (!get_instance_proc) {
-        dlclose(library);
-        return JNI_FALSE;
-    }
-    auto create_instance = reinterpret_cast<PFN_vkCreateInstance>(
-            get_instance_proc(VK_NULL_HANDLE, "vkCreateInstance"));
-    if (!create_instance) {
-        dlclose(library);
-        return JNI_FALSE;
-    }
-    const VkApplicationInfo app_info{
-        .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
-        .pApplicationName = "DcamNodeRuntime",
-        .applicationVersion = VK_MAKE_VERSION(1, 0, 0),
-        .pEngineName = "DcamNodeABI",
-        .engineVersion = VK_MAKE_VERSION(1, 0, 0),
-        .apiVersion = VK_API_VERSION_1_0,
-    };
-    const VkInstanceCreateInfo create_info{
-        .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
-        .pApplicationInfo = &app_info,
-    };
-    VkInstance instance = VK_NULL_HANDLE;
-    bool available = false;
-    if (create_instance(&create_info, nullptr, &instance) == VK_SUCCESS) {
-        auto enumerate = reinterpret_cast<PFN_vkEnumeratePhysicalDevices>(
-                get_instance_proc(instance, "vkEnumeratePhysicalDevices"));
-        auto destroy = reinterpret_cast<PFN_vkDestroyInstance>(
-                get_instance_proc(instance, "vkDestroyInstance"));
-        uint32_t count = 0;
-        available = enumerate && enumerate(instance, &count, nullptr) == VK_SUCCESS && count > 0;
-        if (destroy) destroy(instance, nullptr);
-    }
-    dlclose(library);
-    return available ? JNI_TRUE : JNI_FALSE;
 }
 
 } // extern "C"

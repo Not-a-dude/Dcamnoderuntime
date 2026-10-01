@@ -3,8 +3,8 @@
 This APK is the unprivileged execution host for Dcam Node ABI.
 It intentionally declares no internet, camera, audio, media-read, or storage permission.
 
-The Runtime APK is mandatory. Dcam completes the ABI, UID, process-isolation,
-and Vulkan handshake before opening `CameraDevice`. A missing service, rejected
+The Runtime APK is mandatory. Dcam completes the ABI and UID
+handshake before opening `CameraDevice`. A missing service, rejected
 binding, Runtime crash, or stock-node load failure closes Camera2 and produces
 an explicit camera error. Preview and photo processing never fall back to the
 Dcam process.

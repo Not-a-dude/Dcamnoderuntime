@@ -266,7 +266,6 @@ class NodeRuntimeService : Service() {
 
     private val sessions = ConcurrentHashMap<Long, RuntimeSession>()
     private val sessionOpenLock = Any()
-    private val vulkanAvailable by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { probeVulkanNative() }
     private val watchdog: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor { task ->
         Thread(task, "DcamNodeWatchdog").apply { isDaemon = true }
     }
@@ -278,10 +277,8 @@ class NodeRuntimeService : Service() {
                 runtimeAbi = RUNTIME_ABI
                 pid = Process.myPid()
                 uid = Process.myUid()
-                isolated = Process.isIsolated()
-                vulkanAvailable = this@NodeRuntimeService.vulkanAvailable
                 runtimeVersion = RUNTIME_VERSION
-                diagnostics = "Runtime ABI $runtimeAbi, pid=$pid, uid=$uid, isolated=$isolated, vulkan=$vulkanAvailable"
+                diagnostics = "Runtime ABI $runtimeAbi, pid=$pid, uid=$uid"
             }
         }
 
@@ -615,7 +612,7 @@ class NodeRuntimeService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        Log.i(TAG, "Runtime created: pid=${Process.myPid()} uid=${Process.myUid()} isolated=${Process.isIsolated()}")
+        Log.i(TAG, "Runtime created: pid=${Process.myPid()} uid=${Process.myUid()}")
     }
 
     override fun onBind(intent: Intent): IBinder {
@@ -780,7 +777,6 @@ class NodeRuntimeService : Service() {
     private external fun evictZslFrameNative(handle: Long, frameId: Long): Int
     private external fun flushSessionNative(handle: Long): Int
     private external fun closeSessionNative(handle: Long)
-    private external fun probeVulkanNative(): Boolean
 
     companion object {
         private const val TAG = "DcamNodeRuntime"
