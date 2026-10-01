@@ -3,6 +3,16 @@
     <permission
         android:name="com.dcamnoderuntime.permission.RUN_NODE"
         android:protectionLevel="signature" />
+
+    <uses-feature
+        android:name="android.hardware.vulkan.version"
+        android:required="true"
+        android:version="0x400003" />
+    <uses-feature
+        android:name="android.hardware.vulkan.compute"
+        android:required="true"
+        android:version="0" />
+
     <application
         android:allowBackup="false"
         android:fullBackupContent="false"
