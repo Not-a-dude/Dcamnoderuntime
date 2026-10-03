@@ -311,12 +311,12 @@ class NodeRuntimeService : Service() {
             val sessionId = config.requestedSessionId
             Log.i(TAG, "Opening session $sessionId (nodeType=${config.nodeTypeId})")
 
-            if (config.runtimeAbi != RUNTIME_ABI) {
+            if (config.clientAbi != CLIENT_ABI) {
                 nodeLibrary.closeQuietly()
                 dependencies.closeDescriptors()
                 return response.fail(
                     STATUS_ABI_MISMATCH,
-                    "Dcam runtime ABI ${config.runtimeAbi} is unsupported; expected $RUNTIME_ABI",
+                    "Dcam client ABI ${config.clientAbi} is unsupported; expected $CLIENT_ABI",
                 )
             }
             if (sessionId <= 0 || sessions.containsKey(sessionId)) {
@@ -644,7 +644,7 @@ class NodeRuntimeService : Service() {
         if (!closed) Process.killProcess(Process.myPid())
     }
 
-    private fun newSessionResult() = SessionOpenResult().apply { runtimeAbi = RUNTIME_ABI }
+    private fun newSessionResult() = SessionOpenResult()
 
     private fun validateDependencies(dependencies: Array<out DependencyParcel>): String? {
         if (dependencies.size > MAX_DEPENDENCIES) return "Too many node dependencies"
@@ -782,7 +782,8 @@ class NodeRuntimeService : Service() {
         private const val TAG = "DcamNodeRuntime"
         private const val CLIENT_PACKAGE = "com.dcam"
         private const val PERMISSION_RUN_NODE = "com.dcamnoderuntime.permission.RUN_NODE"
-        private const val RUNTIME_ABI = 1
+        private val CLIENT_ABI = SessionConfigParcel().clientAbi
+        private val RUNTIME_ABI = RuntimeInfo().runtimeAbi
         private const val RUNTIME_VERSION = "1.1.0"
         private const val STATUS_OK = 0
         private const val STATUS_INVALID_ARGUMENT = -1
