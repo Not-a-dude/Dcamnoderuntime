@@ -1,5 +1,7 @@
 # Dcam Node Runtime
 
+*Read this in other languages: [Русский](README_ru.md)*
+
 This APK is the unprivileged execution host for Dcam Node ABI.
 It intentionally declares no internet, camera, audio, media-read, or storage permission.
 
@@ -9,11 +11,8 @@ binding, Runtime crash, or stock-node load failure closes Camera2 and produces
 an explicit camera error. Preview and photo processing never fall back to the
 Dcam process.
 
-The canonical ABI, AIDL, schemas, samples, compatibility tests, and normative
-Markdown specifications live in the sibling Dcam repository:
-
-- `../Dcam/node-sdk`
-- `../Dcam/docs/README.md`
+The canonical ABI, AIDL, schemas, samples, compatibility tests, and normative Markdown
+specifications live in the [Dcam-Node-SDK](Dcam-Node-SDK) submodule.
 
 Runtime compiles AIDL and the C header directly from that SDK. Its loader accepts
 module/dependency FDs, resolves only `dcam_node_get_api`, serializes calls per
