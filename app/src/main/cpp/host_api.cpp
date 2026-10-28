@@ -37,10 +37,16 @@ ARect centeredPreviewCrop(
         uint32_t source_height,
         int32_t destination_width,
         int32_t destination_height,
-        int32_t transform) {
-    int32_t crop_width = static_cast<int32_t>(source_width);
-    int32_t crop_height = static_cast<int32_t>(source_height);
-    const bool swaps_axes = (transform & ANATIVEWINDOW_TRANSFORM_ROTATE_90) != 0;
+        [[maybe_unused]] int32_t transform) {
+    auto crop_width = static_cast<int32_t>(source_width);
+    auto crop_height = static_cast<int32_t>(source_height);
+    if (crop_width <= 0 || crop_height <= 0 || destination_width <= 0 || destination_height <= 0) {
+        return {0, 0, crop_width, crop_height};
+    }
+
+    const bool source_is_landscape = crop_width > crop_height;
+    const bool dest_is_landscape = destination_width > destination_height;
+    const bool swaps_axes = (source_is_landscape != dest_is_landscape);
     const int64_t display_width = swaps_axes ? crop_height : crop_width;
     const int64_t display_height = swaps_axes ? crop_width : crop_height;
 

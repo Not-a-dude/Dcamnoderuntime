@@ -417,6 +417,18 @@ Java_com_dcamnoderuntime_NodeRuntimeService_processFrameNative(JNIEnv* env, jobj
         parameters ? static_cast<uint32_t>(env->GetStringUTFLength(jparameters)) : 0u,
     };
 
+    jfieldID content_tag_field = env->GetFieldID(cls, "contentTag", "Ljava/lang/String;");
+    jstring jcontent_tag = content_tag_field ? (jstring) env->GetObjectField(f, content_tag_field)
+                                             : nullptr;
+    const char *content_tag = jcontent_tag ? env->GetStringUTFChars(jcontent_tag, nullptr)
+                                           : nullptr;
+    frame.content_tag = {
+            content_tag,
+            content_tag ? static_cast<uint32_t>(env->GetStringUTFLength(jcontent_tag)) : 0u,
+    };
+    frame.attachment_count = 0;
+    frame.attachments = nullptr;
+
     uint32_t flags = 0;
     s->processing_frame_id.store(frame.frame_id);
     s->processing_frame_buffer.store(frame.hardware_buffer);
@@ -429,6 +441,8 @@ Java_com_dcamnoderuntime_NodeRuntimeService_processFrameNative(JNIEnv* env, jobj
     s->processing_frame_buffer.store(nullptr);
     s->processing_frame_id.store(0);
 
+    if (content_tag) env->ReleaseStringUTFChars(jcontent_tag, content_tag);
+    if (jcontent_tag) env->DeleteLocalRef(jcontent_tag);
     if (parameters) env->ReleaseStringUTFChars(jparameters, parameters);
     if (jparameters) env->DeleteLocalRef(jparameters);
 
